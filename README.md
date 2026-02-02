@@ -8,15 +8,15 @@
 
 > **Official implementation code for the IEEE Transactions on Reliability submission.**
 
-## 📌 Paper Information
-**Title:** Reliability-Aware RUL Prognostics for Semiconductor Test Socket Micro-Pins Using Physics-Informed Residuals  
-**Authors:** Juhun Lee, Kihyun Kim, Hyo-Young Kim*  
-**Affiliation:** Tech University of Korea, Department of Mechatronics Engineering  
+## Paper Information
+**Title:** Reliability-Aware RUL Prognostics for Semiconductor Test Socket Micro-Pins Using Physics-Informed Residuals
+**Authors:** Juhun Lee, Kihyun Kim, Hyo-Young Kim*
+**Affiliation:** Tech University of Korea, Department of Mechatronics Engineering
 **Journal:** IEEE Transactions on Reliability (Under Review)
 
 ---
 
-## 📖 Overview
+## Overview
 
 This repository contains the source code for a novel **Physics-Informed Uncertainty-Aware Ensemble Framework** designed to predict the Remaining Useful Life (RUL) of semiconductor test socket micro-pins. The proposed method addresses the challenge of predicting contact failure in varying current conditions (0A, 0.5A, 1.0A) by integrating physical contact theory with deep learning.
 
@@ -29,7 +29,7 @@ This repository contains the source code for a novel **Physics-Informed Uncertai
 
 ---
 
-## 🏗️ Model Architecture
+## Model Architecture
 
 The overall framework consists of three main stages: **Preprocessing (PHI & Soft Labeling)**, **Ensemble Modeling**, and **RUL Prediction**.
 
@@ -37,7 +37,7 @@ The overall framework consists of three main stages: **Preprocessing (PHI & Soft
 
 ---
 
-## 📂 Project Structure
+## Project Structure
 
 ```bash
 gitcode/
@@ -57,7 +57,7 @@ gitcode/
 
 ---
 
-## ⚙️ Hyperparameters (Paper Table IV)
+## Hyperparameters (Paper Table IV)
 
 | Category | Parameter | Value |
 |:---|:---|:---|
@@ -73,7 +73,7 @@ gitcode/
 
 ---
 
-## 🚀 Getting Started
+## Getting Started
 
 ### 1. Prerequisites
 *   Python 3.8+
@@ -113,7 +113,7 @@ python train.py
 
 ---
 
-## 📊 Experimental Results (Paper Table V)
+## Experimental Results (Paper Table V)
 
 The proposed method demonstrates superior performance compared to state-of-the-art baselines.
 
@@ -125,7 +125,7 @@ The proposed method demonstrates superior performance compared to state-of-the-a
 
 ---
 
-## 🔗 Baseline Models
+## Baseline Models
 
 For fair comparison, we evaluated against the following state-of-the-art baselines. We used official implementations with hyperparameters tuned for our RUL prediction task:
 
@@ -141,7 +141,7 @@ For fair comparison, we evaluated against the following state-of-the-art baselin
 
 ---
 
-## 📜 Citation
+## Citation
 
 If you use this code for your research, please cite our paper:
 
@@ -157,7 +157,7 @@ If you use this code for your research, please cite our paper:
 
 ---
 
-## 📧 Contact
+## Contact
 For any queries, please contact:
 *   **Hyo-Young Kim** (Corresponding Author): kimhy@tukorea.ac.kr
 *   **Juhun Lee**: 2018144024@tukorea.ac.kr
