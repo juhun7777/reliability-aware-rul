@@ -10,11 +10,14 @@ Runs the proposed framework:
 """
 import argparse
 import json
+from pathlib import Path
+import hashlib
+import pandas as pd
+import joblib
 import numpy as np
 import torch
 import warnings
 import matplotlib.pyplot as plt
-warnings.filterwarnings('ignore')
 
 from config.config import config
 from utils.data_loader import DataLoaderFileBase
@@ -112,6 +115,14 @@ def evaluate_framework(models, test_data_list, config):
     predictions = ensemble_results['predictions']
     targets = ensemble_results['targets']
     files_info = ensemble_results['files_info']
+    # Preserve observation identity, all expert means/weights and actual MC draws.
+    output = Path(config.SAVE_DIR)
+    output.mkdir(parents=True, exist_ok=True)
+    with (output / 'file_predictions.json').open('w', encoding='utf-8') as f:
+        json.dump(files_info, f, indent=2, default=lambda x: x.item())
+    pd.DataFrame([{k: v for k, v in r.items() if k != 'mc_predictions'}
+                  for r in files_info]).to_csv(output/'file_predictions.csv', index=False)
+    np.save(output/'mc_predictions.npy', np.array([r['mc_predictions'] for r in files_info]))
 
     # Calculate Metric
     metrics = {
@@ -182,10 +193,31 @@ def main():
     # 2. Train STFT Soft Label Generator
     print(f"\n2. Training STFT-based Soft Label Generator...")
     data_loader.train_soft_label_generator()
+    output = Path(config.SAVE_DIR)
+    source = []
+    for split, groups in [('train', data_loader.train_files), ('val', data_loader.val_files),
+                          ('test', data_loader.test_files)]:
+        for condition, paths in groups.items():
+            for path in paths:
+                source.append(dict(split=split, condition=condition, path=str(Path(path).resolve()),
+                    sha256=hashlib.sha256(Path(path).read_bytes()).hexdigest()))
+    settings = {k: v for k, v in vars(type(config)).items()
+                if k.isupper() and isinstance(v, (str, int, float, bool, list, tuple, dict))}
+    with (output/'run_config.json').open('w', encoding='utf-8') as f:
+        json.dump(dict(settings=settings, files=source,
+                       gate_validation=getattr(data_loader.soft_label_generator, 'validation_protocol', None),
+                       protocol='revised legacy BiLSTM path; not an archived paper-table execution'),
+                  f, indent=2, default=str)
+    generator = data_loader.soft_label_generator
+    joblib.dump(generator.scaler, output/'gate_scaler.joblib')
+    if hasattr(generator.model, 'state_dict'):
+        torch.save(generator.model.state_dict(), output/'gate_state.pt')
 
     # 3. Train Ensemble Models
     print(f"\n3. Training Condition-Specific Bi-LSTM Ensemble...")
     models, histories, test_data_list = train_ensemble_models(data_loader, config)
+    with (output/'training_histories.json').open('w', encoding='utf-8') as f:
+        json.dump(histories, f, indent=2)
 
     # 4. Evaluation
     print(f"\n4. Final Evaluation...")

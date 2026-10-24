@@ -7,6 +7,7 @@ import glob
 import random
 import numpy as np
 import pandas as pd
+from utils.csv_io import read_csv as read_sensor_csv
 from sklearn.preprocessing import StandardScaler
 from tqdm import tqdm
 from utils.preprocessing import PHICalculator, SoftLabelGenerator, STFTSoftLabelGenerator, RULNormalizer
@@ -61,16 +62,11 @@ class DataLoaderFileBase:
                 print(f"  {current}: Not enough files (Found {len(all_files)}, Need {total_needed})")
                 continue
 
-            random.shuffle(all_files)
+            random.Random(self.config.SEED).shuffle(all_files)
 
             self.train_files[current] = all_files[:self.config.N_TRAIN]
             self.val_files[current] = all_files[self.config.N_TRAIN:self.config.N_TRAIN + self.config.N_VAL]
             self.test_files[current] = all_files[self.config.N_TRAIN + self.config.N_VAL:total_needed]
-
-            # 0A specific fix (as per development history)
-            if current == '0A' and len(all_files) > total_needed:
-                self.test_files[current][0] = all_files[total_needed]
-                print(f"  [0A] Replaced Test File #1 for better representation")
 
             print(f"  {current}: Train={len(self.train_files[current])}, Val={len(self.val_files[current])}, Test={len(self.test_files[current])}")
 
@@ -86,20 +82,27 @@ class DataLoaderFileBase:
                 batch_size=self.config.STFT_MLP_BATCH_SIZE,
                 lr=self.config.STFT_MLP_LR,
                 patience=getattr(self.config, 'STFT_EARLY_STOP_PATIENCE', 10),
-                dropout=getattr(self.config, 'STFT_MLP_DROPOUT', 0.3)
+                dropout=getattr(self.config, 'STFT_MLP_DROPOUT', 0.3),
+                validation_data_dict=self.val_files,
+                group_map=getattr(self.config, 'STFT_GROUP_MAP', None),
+                seed=self.config.SEED
             )
 
     def load_single_file(self, file_path, mode='train', fit_scaler=True, current_label=None):
         """Load and preprocess a single file"""
         try:
-            df = pd.read_csv(file_path, encoding='cp949')
+            df = read_sensor_csv(file_path)
             df.columns = df.columns.str.replace('\ufeff', '').str.strip()
 
             if 'res' not in df.columns or 'force' not in df.columns:
                 return None
 
+            if 'cumulative_contact' not in df.columns:
+                raise ValueError('cumulative_contact is required; row counts are not cycle units.')
+            rul_source = 'provided_column'
             if 'RUL' not in df.columns:
-                df['RUL'] = np.arange(len(df), 0, -1)
+                df['RUL'] = df['cumulative_contact'].iloc[-1] - df['cumulative_contact']
+                rul_source = 'record_end_minus_cycle_not_authenticated_failure'
 
             if len(df) < self.config.WINDOW_SIZE:
                 return None
@@ -108,10 +111,7 @@ class DataLoaderFileBase:
 
             # Test mode: Cut data (80-90%)
             if mode == 'test':
-                cut_ratio = np.random.uniform(
-                    self.config.TEST_CUT_RANGE[0],
-                    self.config.TEST_CUT_RANGE[1]
-                )
+                cut_ratio = getattr(self.config, 'TEST_OBSERVATION_FRACTION', .8)
                 cut_idx = int(original_length * cut_ratio)
                 cut_idx = max(cut_idx, self.config.WINDOW_SIZE + 10)
                 df = df.iloc[:cut_idx]
@@ -146,6 +146,10 @@ class DataLoaderFileBase:
                 'rul': rul_normalized,
                 'rul_original': rul,
                 'resistance': resistance,
+                'cumulative_contact': df['cumulative_contact'].to_numpy(),
+                'file_path': os.path.abspath(file_path),
+                'end_index': len(df) - 1,
+                'rul_source': rul_source,
                 'soft_labels': soft_labels,
                 'original_length': original_length,
                 'current_label': current_label

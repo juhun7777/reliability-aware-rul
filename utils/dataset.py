@@ -37,7 +37,7 @@ class RULDataset(Dataset):
 
                 # Add cumulative cycle count channel
                 window_end_idx = i + window_size - 1
-                cumulative_cycles = targets_original[0] - targets_original[window_end_idx]
+                cumulative_cycles = file_data['cumulative_contact'][window_end_idx]
                 
                 # Global Max Normalization
                 cumulative_scaled = np.clip(cumulative_cycles / config.CUMULATIVE_MAX_CYCLE, 0, 1)

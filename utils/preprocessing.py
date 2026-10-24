@@ -8,15 +8,18 @@ RUL Normalization
 """
 import numpy as np
 import pandas as pd
+from utils.csv_io import read_csv as read_sensor_csv
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import RandomForestClassifier
 from scipy import stats
 from scipy.signal import stft
 from collections import Counter
 from tqdm import tqdm
+from sklearn.model_selection import GroupShuffleSplit
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from pathlib import Path
 
 
 def inverse_transform_rul(normalized_rul, max_cycle=400000.0, min_cycle=1000.0):
@@ -44,10 +47,12 @@ class PHICalculator:
 
     R_ideal(F) = alpha * F^(-1/3) + beta
     Residual(t) = R_measured(t) - R_ideal(F(t))
-    PHI = (Residual - min_residual) / theta_max
+    Revised PHI = clip((abs(Residual) - initial100mean) / theta_max, 0, 1).
+    legacy_full_min is an explicit historical replay option.
     """
 
-    def __init__(self, alpha=2.34, beta=0.133, max_residual_threshold=30.0):
+    def __init__(self, alpha=2.34, beta=0.133, max_residual_threshold=30.0,
+                 baseline_rows=100, baseline_method='initial_mean'):
         """
         Args:
             alpha: Scaling coefficient (Paper: 2.34)
@@ -57,6 +62,10 @@ class PHICalculator:
         self.alpha = alpha
         self.beta = beta  # Paper value: 0.133
         self.max_residual_threshold = max_residual_threshold
+        self.baseline_rows = baseline_rows
+        if baseline_method not in ('initial_mean', 'legacy_full_min'):
+            raise ValueError('baseline_method must be initial_mean or legacy_full_min')
+        self.baseline_method = baseline_method
 
     def calculate_phi(self, resistance, force):
         """
@@ -85,8 +94,11 @@ class PHICalculator:
         residual = np.abs(R - R_theoretical)
 
         # Global Normalization
-        min_residual = residual.min()
-        phi = (residual - min_residual) / self.max_residual_threshold
+        # Initial calibration uses observed samples only. Full-trajectory minimum
+        # is available explicitly for historical replay, not the revised protocol.
+        baseline_residual = (residual.min() if self.baseline_method == 'legacy_full_min'
+                             else residual[:self.baseline_rows].mean())
+        phi = (residual - baseline_residual) / self.max_residual_threshold
 
         # Clip to [0, 1]
         phi = np.clip(phi, 0, 1)
@@ -169,7 +181,7 @@ class SoftLabelGenerator:
 
             for file_path in tqdm(file_paths, desc=f"  Extracting {current}", leave=False):
                 try:
-                    df = pd.read_csv(file_path, encoding='cp949')
+                    df = read_sensor_csv(file_path)
                     df.columns = df.columns.str.replace('\ufeff', '').str.strip()
                     if 'res' not in df.columns:
                         continue
@@ -378,9 +390,11 @@ class STFTSoftLabelGenerator:
         time_weighted = time_features * 0.35
 
         hybrid_features = np.concatenate([freq_weighted, time_weighted])
-        return hybrid_features
+        return np.nan_to_num(hybrid_features, nan=0., posinf=0., neginf=0.)
 
-    def train_mlp(self, train_data_dict, window_size=400, stride=10, epochs=150, batch_size=128, lr=0.001, patience=10, dropout=0.3):
+    def train_mlp(self, train_data_dict, window_size=400, stride=10, epochs=150,
+                  batch_size=128, lr=0.001, patience=10, dropout=0.3,
+                  validation_data_dict=None, group_map=None, seed=42):
         """
         Train Deep MLP (Paper Section III-C)
 
@@ -397,15 +411,20 @@ class STFTSoftLabelGenerator:
         print("[STFT Soft Label] Training Deep MLP...")
         all_features = []
         all_labels = []
+        all_groups = []
+        validation_flags = []
         label_map = {'0A': 0, '0.5A': 1, '1.0A': 2}
 
         print(f"  Using STFT window_size={window_size}, stride={stride}")
 
-        for current, file_paths in train_data_dict.items():
+        sources = [(c, paths, False) for c, paths in train_data_dict.items()]
+        if validation_data_dict is not None:
+            sources += [(c, paths, True) for c, paths in validation_data_dict.items()]
+        for current, file_paths, is_validation in sources:
             label = label_map[current]
             for file_path in tqdm(file_paths, desc=f"  Extracting {current}", leave=False):
                 try:
-                    df = pd.read_csv(file_path, encoding='cp949')
+                    df = read_sensor_csv(file_path)
                     df.columns = df.columns.str.replace('\ufeff', '').str.strip()
                     if 'res' not in df.columns:
                         continue
@@ -418,6 +437,9 @@ class STFTSoftLabelGenerator:
                         features = self.extract_hybrid_features_window(window)
                         all_features.append(features)
                         all_labels.append(label)
+                        key = str(Path(file_path).resolve())
+                        all_groups.append((group_map or {}).get(key, key))
+                        validation_flags.append(is_validation)
                 except Exception as e:
                     continue
 
@@ -426,22 +448,37 @@ class STFTSoftLabelGenerator:
         print(f"  Extracted {len(X)} feature samples")
 
         if len(X) == 0:
-            print("  Warning: No features extracted.")
-            return
+            raise ValueError('No gate features extracted; inspect CSV columns, encodings and lengths.')
 
         print(f"  Class distribution: {Counter(y)}")
 
-        self.scaler = StandardScaler()
-        X_scaled = self.scaler.fit_transform(X)
-
-        # Train/Validation Split (8:2)
-        indices = np.arange(len(X))
-        np.random.seed(42)
-        np.random.shuffle(indices)
-        split_idx = int(len(X) * 0.8)
-
-        X_train, X_val = X_scaled[indices[:split_idx]], X_scaled[indices[split_idx:]]
-        y_train, y_val = y[indices[:split_idx]], y[indices[split_idx:]]
+        groups = np.asarray(all_groups)
+        if validation_data_dict is not None:
+            val_idx = np.flatnonzero(validation_flags)
+            train_idx = np.flatnonzero(~np.asarray(validation_flags))
+        else:
+            # Keep every window from a file/parent on the same side. A supplied
+            # group_map also keeps augmented siblings together.
+            splits = GroupShuffleSplit(n_splits=50, test_size=.2, random_state=seed)
+            valid = [(a, b) for a, b in splits.split(X, y, groups)
+                     if len(np.unique(y[a])) == 3 and len(np.unique(y[b])) == 3]
+            if not valid:
+                raise ValueError('Need distinct groups for all three classes; provide validation_data_dict.')
+            train_idx, val_idx = valid[0]
+        if not len(train_idx) or not len(val_idx):
+            raise ValueError('Nonempty training and validation groups are required.')
+        if set(groups[train_idx]) & set(groups[val_idx]):
+            raise ValueError('STFT training and validation groups overlap.')
+        if set(y[train_idx]) != {0, 1, 2} or set(y[val_idx]) != {0, 1, 2}:
+            raise ValueError('All three source classes must appear in each gate split.')
+        self.scaler = StandardScaler().fit(X[train_idx])
+        X_train, X_val = self.scaler.transform(X[train_idx]), self.scaler.transform(X[val_idx])
+        y_train, y_val = y[train_idx], y[val_idx]
+        self.validation_protocol = dict(
+            split='explicit_groups' if validation_data_dict is not None else 'group_holdout',
+            train_groups=sorted(set(groups[train_idx])),
+            validation_groups=sorted(set(groups[val_idx])),
+            scaler_fit='training_only', seed=seed)
 
         print(f"  Train: {len(X_train)}, Val: {len(X_val)}")
 
@@ -449,7 +486,10 @@ class STFTSoftLabelGenerator:
         train_dataset = torch.utils.data.TensorDataset(torch.FloatTensor(X_train), torch.LongTensor(y_train))
         val_dataset = torch.utils.data.TensorDataset(torch.FloatTensor(X_val), torch.LongTensor(y_val))
 
-        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=True)
+        if len(train_dataset) < 2 or batch_size < 2:
+            raise ValueError('STFT BatchNorm training needs at least two examples per batch.')
+        train_loader = torch.utils.data.DataLoader(train_dataset,
+            batch_size=min(batch_size, len(train_dataset)), shuffle=True, drop_last=True)
         val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
         # Model setup (Paper Figure 2: 160->256->128->64->3)
@@ -509,7 +549,10 @@ class STFTSoftLabelGenerator:
             if avg_val_loss < best_val_loss:
                 best_val_loss = avg_val_loss
                 patience_counter = 0
-                best_model_state = self.model.state_dict()
+                best_model_state = {k: v.detach().cpu().clone()
+                                    for k, v in self.model.state_dict().items()}
+                best_val_accuracy = val_acc
+                best_epoch = epoch + 1
             else:
                 patience_counter += 1
                 if patience_counter >= patience:
@@ -519,6 +562,8 @@ class STFTSoftLabelGenerator:
         if best_model_state:
             self.model.load_state_dict(best_model_state)
             print("  Loaded best model weights.")
+            self.validation_protocol.update(best_epoch=best_epoch,
+                                            best_val_accuracy=best_val_accuracy)
 
         self.trained_window_size = window_size
         print(f"  MLP trained. Best Val Loss: {best_val_loss:.4f}, Final Val Acc: {final_accuracy:.2f}%")

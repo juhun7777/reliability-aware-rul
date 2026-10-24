@@ -41,7 +41,8 @@ def calculate_nasa_score(predictions, targets):
 
     where d_i = y_hat_i - y_i
 
-    Returns log10(NASA_score) for interpretability.
+    Returns log10(1 + sum(scores)) after scaling errors by 10,000 cycles.
+    This is a scaled/log diagnostic, not the unscaled NASA challenge total.
     """
     errors = predictions - targets
 
@@ -54,11 +55,11 @@ def calculate_nasa_score(predictions, targets):
 
     for e in errors_scaled:
         if e < 0:
-            # Under-prediction: more severe penalty (a1 = 13)
+            # Early prediction (a1 = 13).
             exponent = min(-e / 13, MAX_EXP)
             score = np.exp(exponent) - 1
         else:
-            # Over-prediction: less severe penalty (a2 = 10)
+            # Late prediction has the stronger penalty (a2 = 10).
             exponent = min(e / 10, MAX_EXP)
             score = np.exp(exponent) - 1
 
@@ -66,8 +67,8 @@ def calculate_nasa_score(predictions, targets):
 
     total_score = np.sum(scores)
 
-    if not np.isfinite(total_score) or total_score <= 0:
-        return 10.0
+    if not np.isfinite(total_score):
+        raise ValueError('Nonfinite NASA score; inspect predictions and targets.')
 
     log_score = np.log10(total_score + 1)
     return log_score

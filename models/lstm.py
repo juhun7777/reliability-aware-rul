@@ -92,7 +92,7 @@ class LSTMNetwork(nn.Module):
     def __init__(self, input_size=5, hidden_size=128, num_layers=3, dropout=0.1, bidirectional=True):
         """
         Args:
-            input_size: Number of input features (Paper: 5 - PHI, R_raw, F, dR/dt, Cycle)
+            input_size: PHI, R_raw, F, initial-relative R, observed cycle (5 channels)
             hidden_size: LSTM hidden size (Paper Table IV: 128)
             num_layers: Number of LSTM layers (Paper Table IV: 3)
             dropout: Dropout rate (Paper Table IV: 0.1)
@@ -200,6 +200,7 @@ class LSTMModel(BaseDeepLearningModel):
 
         best_val_rmse = float('inf')
         best_epoch = 0
+        best_state = None
         patience_counter = 0
 
         history = {
@@ -255,6 +256,8 @@ class LSTMModel(BaseDeepLearningModel):
                 best_val_rmse = val_rmse_orig
                 best_epoch = epoch
                 self.save(self.config.MODEL_PATH)
+                best_state = {k: v.detach().cpu().clone()
+                              for k, v in self.model.state_dict().items()}
                 best_marker = "v"
                 patience_counter = 0
             else:
@@ -274,6 +277,8 @@ class LSTMModel(BaseDeepLearningModel):
 
         print("="*70)
         print(f"Training completed! Best Epoch: {best_epoch+1}, Best Val RMSE: {best_val_rmse:.1f} cycles")
+        if best_state is not None:
+            self.model.load_state_dict(best_state)
 
         return history
 

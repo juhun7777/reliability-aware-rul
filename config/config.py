@@ -35,6 +35,7 @@ class Config:
     N_VAL = 1
     N_TEST = 1
     TEST_CUT_RANGE = (0.8, 0.9)
+    TEST_OBSERVATION_FRACTION = 0.8  # fixed revised evaluation, not historical random cuts
 
     # Time-series Window (Paper Table IV)
     WINDOW_SIZE = 200  # Input window size

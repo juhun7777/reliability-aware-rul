@@ -97,8 +97,8 @@ def evaluate_ensemble_rul_prediction(model_0A, model_0_5A, model_1A, test_data_l
             last_rul = rul_orig[-1]
 
             # Add accumulative cycle channel
-            cumulative_cycles = rul_orig[0] - last_rul
-            cumulative_scaled = np.clip(cumulative_cycles / global_config.CUMULATIVE_MAX_CYCLE, 0, 1)
+            cumulative_cycles = file_data['cumulative_contact'][-1]
+            cumulative_scaled = np.clip(cumulative_cycles / config.CUMULATIVE_MAX_CYCLE, 0, 1)
             cumulative_channel = np.full((window_size, 1), cumulative_scaled)
             last_window_with_cumulative = np.concatenate([last_window, cumulative_channel], axis=1)
 
@@ -139,13 +139,21 @@ def evaluate_ensemble_rul_prediction(model_0A, model_0_5A, model_1A, test_data_l
             targets.append(last_rul)
 
             files_info.append({
+                'file_path': file_data.get('file_path'),
+                'end_index': file_data.get('end_index', len(inputs)-1),
+                'observed_cycle': float(cumulative_cycles),
+                'observed_rows': len(inputs),
+                'total_rows': file_data['original_length'],
+                'cut_fraction_rows': len(inputs)/file_data['original_length'],
+                'rul_source': file_data.get('rul_source', 'provided_column'),
                 'pred_0A': float(np.mean(mc_pred_0A_list)),
                 'pred_0.5A': float(np.mean(mc_pred_0_5A_list)),
                 'pred_1A': float(np.mean(mc_pred_1A_list)),
                 'weights': [float(w_0A), float(w_0_5A), float(w_1A)],
                 'ensemble_pred': final_pred,
                 'uncertainty': uncertainty,
-                'target': last_rul
+                'target': last_rul,
+                'mc_predictions': mc_predictions.tolist()
             })
 
     # Restore Eval mode

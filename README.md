@@ -1,163 +1,140 @@
 # Reliability-Aware RUL Prognostics for Semiconductor Test Socket Micro-Pins
 
-<!-- Badges -->
-[![Python 3.8+](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://www.python.org/downloads/release/python-380/)
-[![PyTorch 1.10+](https://img.shields.io/badge/pytorch-1.10%2B-orange.svg)](https://pytorch.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Submission Status](https://img.shields.io/badge/IEEE-Trans.%20Reliability-green)](https://ieeexplore.ieee.org/xpl/RecentIssue.jsp?punumber=24)
+Research code for condition-specific RUL prediction from resistance and force.
+The repository contains the original Bi-LSTM implementation and a revised,
+explicit-manifest workflow with pooled, independent-expert and shared-encoder
+Transformer controls.
 
-> **Official implementation code for the IEEE Transactions on Reliability submission.**
+The revised workflow is a **new development protocol**. Running its defaults
+is not a claim to reproduce the historical manuscript tables or calibration.
+The original README is preserved in [docs/legacy_readme.md](docs/legacy_readme.md).
 
-## Paper Information
-**Title:** Reliability-Aware RUL Prognostics for Semiconductor Test Socket Micro-Pins Using Physics-Informed Residuals
-**Authors:** Juhun Lee, Kihyun Kim, Hyo-Young Kim*
-**Affiliation:** Tech University of Korea, Department of Mechatronics Engineering
-**Journal:** IEEE Transactions on Reliability (Under Review)
+## Revised workflow
 
----
+Use Python3.10+ and the dependencies in `requirements.txt` (tested with
+Python3.12, PyTorch2.7.1, NumPy1.26.4, pandas2.2.2, SciPy1.16.3,
+scikit-learn1.5.1). No network download occurs during training.
 
-## Overview
-
-This repository contains the source code for a novel **Physics-Informed Uncertainty-Aware Ensemble Framework** designed to predict the Remaining Useful Life (RUL) of semiconductor test socket micro-pins. The proposed method addresses the challenge of predicting contact failure in varying current conditions (0A, 0.5A, 1.0A) by integrating physical contact theory with deep learning.
-
-### Key Contributions
-1.  **Physics-Informed Health Indicator (PHI)**: Utilizes the **Holm-Hertz contact theory** to define a degradation indicator, separating physical contact resistance changes from degradation.
-    *   Formula: $R_{ideal}(F) = \alpha \cdot F^{-1/3} + \beta$ (where $\alpha=2.34, \beta=0.133$)
-2.  **STFT-based Soft Labeling**: Proposes a soft-labeling technique using Short-Time Fourier Transform (STFT) features to interpolate operating conditions for robust generalization.
-3.  **Condition-Specific Ensemble**: Deploys a weighted ensemble of Bi-LSTM models with **Bahdanau Attention**, specialized for different current levels.
-4.  **Uncertainty Quantification**: Implements **Monte Carlo Dropout** to provide confidence intervals for RUL predictions, critical for industrial reliability.
-
----
-
-## Model Architecture
-
-The overall framework consists of three main stages: **Preprocessing (PHI & Soft Labeling)**, **Ensemble Modeling**, and **RUL Prediction**.
-
-![Overall Framework](assets/framework.jpg)
-
----
-
-## Project Structure
-
-```bash
-gitcode/
-├── config/
-│   └── config.py           # Hyperparameters (Table IV from paper)
-├── models/
-│   ├── lstm.py             # Bi-LSTM with Bahdanau Attention (Prop. Method)
-│   └── ensemble_lstm.py    # Weighted Ensemble Logic
-├── utils/
-│   ├── preprocessing.py    # PHI Calculation(Algo 1) & STFT Soft Labeling(Algo 2)
-│   ├── data_loader.py      # Data Pipeline & Splitting
-│   └── metrics.py          # Evaluation Metrics (RMSE, NASA Score)
-├── train.py                # Main Entry Point for Training & Evaluation
-├── requirements.txt        # Python Dependencies
-└── README.md               # Project Documentation
-```
-
----
-
-## Hyperparameters (Paper Table IV)
-
-| Category | Parameter | Value |
-|:---|:---|:---|
-| **Optimization** | Optimizer | AdamW |
-| | Learning Rate | 5×10⁻⁴ |
-| | Batch Size | 32 |
-| | Loss Function | Huber Loss (δ=0.5) |
-| **Model** | LSTM Layers | 3 (Bidirectional) |
-| | Hidden Size | 128 |
-| | Attention | Bahdanau-style |
-| **PHI** | $\alpha$ (Roughness Coeff) | 2.34 |
-| | $\beta$ (Const. Resistance) | 0.133 |
-
----
-
-## Getting Started
-
-### 1. Prerequisites
-*   Python 3.8+
-*   PyTorch 1.10+
-*   See `requirements.txt` for full list.
-
-### 2. Installation
-```bash
-git clone https://github.com/juhun7777/reliability-aware-rul.git
-cd reliability-aware-rul
+```text
 pip install -r requirements.txt
+python -m unittest discover -s tests -v
 ```
 
-### 3. Data Structure
-The repository includes sample data for code verification. The data is organized as follows:
+The bundled18CSV sample is for code verification. Its manifest uses file-level
+hash groups because authenticated original-parent identities are not included.
+It is not a claim of18independent measured pins or independent unseen-current
+validation. For a short execution check:
 
-```
-data/
-├── train/          # Training data (Known conditions)
-│   ├── 0A/         # 0A current condition
-│   ├── 0.5A/       # 0.5A current condition
-│   └── 1.0A/       # 1.0A current condition
-└── test/           # Test data (Unseen conditions for generalization)
-    ├── 0.3A/       # Unseen condition
-    ├── 0.7A/       # Unseen condition
-    └── 0.9A/       # Unseen condition
+```text
+python train_revision.py --manifest examples/sample_manifest.csv --output results/demo --models shared --seeds 42 --epochs 2 --fixed-gate
 ```
 
-> **Note**: Sample data is provided for code verification. Full dataset will be made available upon paper acceptance.
+For actual experiments, supply an explicit manifest with original-parent groups:
 
-### 4. Training & Evaluation
-Run the main script to reproduce the results. This script handles data loading, soft-label generator training, ensemble model training, and final evaluation.
-```bash
+```csv
+record_id,path,split,condition,group_id
+train_01,/path/train/0A/pin01.csv,train,0A,original_01
+train_02,/path/train/0.5A/pin02.csv,train,0.5A,original_02
+val_01,/path/val/0.3A/pin03.csv,val,0.3A,original_03
+```
+
+This is a column-format illustration, not a complete trainable manifest. Each
+training condition needs multiple original groups for internal selection.
+CSV columns are `cumulative_contact,res,force,RUL`; units must be documented by
+the experiment. Evaluation folder names are never used as gate inputs.
+
+```text
+python train_revision.py --manifest /path/manifest.csv --output results/revision --models all --seeds 42 43 44 --mc-samples 30
+```
+
+The output directory must be new. Epoch and gate settings are selected within
+training groups; fixed val observations are70/80/90percent by default. Exact
+observation rows/cycles, seed, all component predictions/weights, errors, MC
+draws, scalers, histories, internal split IDs and input SHA256 hashes are saved.
+Overlapping train/evaluation parent groups require the explicit
+`--allow-development-overlap` option and are recorded as development replay.
+Raw measurements, RUL, endpoints and file names are never rewritten.
+
+## Condition similarity and model controls
+
+- `STFTRateGate` compares observed low-frequency amplitude/trend features after
+  accounting for elapsed cycles. Training classes are0A,0.5A,1.0A. New signals
+  receive continuous expert weights, not a fabricated new current class.
+- The primary gate uses the STFT **DC** component. This is equivalent to a
+  Hann-weighted moving mean; its effect does not establish that nonzero
+  frequency content is necessary. `--gate-bins nonzero_control` provides a
+  separate bins0/1/2 control with the same exposure normalization.
+- `--models all` trains a pooled model, three independent condition experts,
+  and a common Transformer encoder with three condition-specific output heads.
+  Soft/hard/uniform combinations use the same expert outputs. A fixed50:50
+  pooled/expert blend is also exported; its ratio is not tuned on val.
+- `--no-phi` zeros the standardized PHI channel without reducing model capacity.
+  Legacy alpha/beta remain configurable constants; do not interpret them as a
+  newly recovered physical calibration.
+
+See [the full revision protocol](docs/revision_protocol.md) for scaling,
+checkpoint selection, MC policy, limits and the distinction between training
+source classes and measured intermediate currents.
+
+Replay saved checkpoints and the independent `seed+100000` MC seed:
+
+```text
+python tools/replay_revision.py --run results/revision --manifest /path/manifest.csv --output results/replay
+```
+
+To test choosing the pooled/expert fraction using only training-internal
+calibration groups, without re-training or changing val:
+
+```text
+python tools/calibrate_mixture.py --run results/revision --manifest /path/manifest.csv --output results/calibrated_mixture
+```
+
+All candidate fractions and frozen selections are exported before val scoring;
+the result may be worse than the fixed50:50 control.
+
+Compare DC versus added bins using the same saved regression predictions and
+the same MC draws (requires an `--models all` run):
+
+```text
+python tools/compare_gate_bins.py --run results/revision --manifest /path/manifest.csv --output results/gate_bins
+```
+
+## Historical Bi-LSTM path
+
+```text
 python train.py
 ```
-> **Note**: The script automatically performs **Last Window Evaluation** and **Uncertainty Quantification** (MC Dropout) as described in the paper.
 
----
+This remains a separate protocol. Repairs include removing the0A-specific test
+file replacement, fixing the observation fraction to0.8, using measured cycles,
+separating STFT groups before scaling, restoring the best epoch in memory, and
+exporting per-file predictions/config/MC draws. PHI now defaults to an initial
+100-row baseline; `legacy_full_min` is an explicit calculator option for old
+comparisons. These changes can alter results; they must not be called an exact
+historical replay. The sample file split alone cannot establish original-parent
+independence without a supplied group map.
 
-## Experimental Results (Paper Table V)
+## Recalculate revision evidence
 
-The proposed method demonstrates superior performance compared to state-of-the-art baselines.
-
-| Model | RMSE (cycles) | MAE (cycles) | NASA Score |
-|:---|:---:|:---:|:---:|
-| **Proposed Framework** | **24,246** | **17,809** | **0.42** |
-| Autoformer | 23,215 | 20,617 | 0.45 |
-| FEDformer | 24,649 | 22,430 | 0.47 |
-
----
-
-## Baseline Models
-
-For fair comparison, we evaluated against the following state-of-the-art baselines. We used official implementations with hyperparameters tuned for our RUL prediction task:
-
-| Model | Type | Reference |
-|:------|:-----|:----------|
-| **XGBoost** | Machine Learning | [Official Library](https://xgboost.readthedocs.io/) |
-| **LightGBM** | Machine Learning | [Official Library](https://lightgbm.readthedocs.io/) |
-| **CatBoost** | Machine Learning | [Official Library](https://catboost.ai/) |
-| **Autoformer** | Transformer | [Wu et al., NeurIPS 2021](https://github.com/thuml/Autoformer) |
-| **FEDformer** | Transformer | [Zhou et al., ICML 2022](https://github.com/MAZiqing/FEDformer) |
-
-> **Note**: Hyperparameters for baseline models are provided in `config/config.py` for reproducibility.
-
----
-
-## Citation
-
-If you use this code for your research, please cite our paper:
-
-```bibtex
-@article{lee2026reliability,
-  title={Reliability-Aware RUL Prognostics for Semiconductor Test Socket Micro-Pins Using Physics-Informed Residuals},
-  author={Lee, Juhun and Kim, Kihyun and Kim, Hyo-Young},
-  journal={IEEE Transactions on Reliability},
-  year={2026},
-  publisher={IEEE}
-}
+```text
+python tools/revision_evidence.py --manifest /path/manifest.csv --output results/evidence --table /path/table_viii.csv --static-fsr /path/fsr_points.csv --historical-mc /path/mc_dropout_results.npz
 ```
 
----
+Optional inputs can be omitted. The table schema includes `target,prediction,sigma`;
+static FSR points use `source_column_number,force_as_stored,resistance_as_stored`.
+The tool fits initial0--20000cycle calibration, compares PHI/raw using the same
+synthetic sensor noise, recalculates printed metrics and uncertainty/error
+correlations, and checks input preservation. These diagnostics do not invent
+undocumented gains or recreate the historical12x/rho0.68claims.
 
-## Contact
-For any queries, please contact:
-*   **Hyo-Young Kim** (Corresponding Author): kimhy@tukorea.ac.kr
-*   **Juhun Lee**: 2018144024@tukorea.ac.kr
+See [revision questions and primary bibliography records](docs/revision_questions.md).
+The scaled/log NASA diagnostic is explicitly named; perfect predictions score0.
+A correlation between sigma and error does not by itself establish calibrated
+prediction intervals.
+
+## Authors and license
+
+Juhun Lee, Kihyun Kim, Hyo-Young Kim. Tech University of Korea.
+Research manuscript information should follow its current submitted/accepted
+version; the legacy README reflects an earlier submission description.
+MIT License. See [LICENSE](LICENSE).
